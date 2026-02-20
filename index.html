@@ -27,7 +27,7 @@
                         <path fill="currentColor"
                             d="M9.5,3A6.5,6.5 0 0,1 16,9.5C16,11.11 15.41,12.59 14.44,13.73L14.71,14H15.5L20.5,19L19,20.5L14,15.5V14.71L13.73,14.44C12.59,15.41 11.11,16 9.5,16A6.5,6.5 0 0,1 3,9.5A6.5,6.5 0 0,1 9.5,3M9.5,5C7,5 5,7 5,9.5C5,12 7,14 9.5,14C12,14 14,12 14,9.5C14,7 12,5 9.5,5Z" />
                     </svg>
-                    <input type="text" id="search-input" placeholder="Search in this folder...">
+                    <input type="text" id="search-input" placeholder="Search (name, extension, regex)...">
                 </div>
                 <button id="select-btn" class="primary-btn">
                     <span>Select Folder</span>
@@ -53,9 +53,57 @@
                     </button>
                     <span id="current-path">/Users/Documents</span>
                 </div>
+                
+                <!-- Statistics Bar -->
+                <div class="stats-bar">
+                    <div class="stat-item">
+                        <span class="stat-label">Total Size:</span>
+                        <span class="stat-value" id="total-size">0 B</span>
+                    </div>
+                    <div class="stat-item">
+                        <span class="stat-label">Files:</span>
+                        <span class="stat-value" id="file-count">0</span>
+                    </div>
+                    <div class="stat-item">
+                        <span class="stat-label">Folders:</span>
+                        <span class="stat-value" id="folder-count">0</span>
+                    </div>
+                </div>
+
+                <!-- Filters Bar -->
+                <div class="filters-bar">
+                    <div class="filter-group">
+                        <label>Filter by Type:</label>
+                        <select id="type-filter" class="filter-select">
+                            <option value="all">All Types</option>
+                            <option value="images">Images</option>
+                            <option value="videos">Videos</option>
+                            <option value="documents">Documents</option>
+                            <option value="archives">Archives</option>
+                            <option value="folders">Folders Only</option>
+                        </select>
+                    </div>
+                    <div class="filter-group">
+                        <label>Min Size:</label>
+                        <div class="size-filter-input">
+                            <input type="number" id="min-size-input" class="filter-input" placeholder="0" min="0">
+                            <select id="size-unit" class="filter-select-small">
+                                <option value="B">B</option>
+                                <option value="KB">KB</option>
+                                <option value="MB" selected>MB</option>
+                                <option value="GB">GB</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="filter-group">
+                        <button id="find-duplicates-btn" class="secondary-btn">Find Duplicates</button>
+                    </div>
+                </div>
+
                 <div class="list-header">
-                    <div class="col-name">Name</div>
-                    <div class="col-size" id="sort-size">Size ↕</div>
+                    <div class="col-name sortable" id="sort-name">Name ↕</div>
+                    <div class="col-size sortable" id="sort-size">Size ↕</div>
+                    <div class="col-date sortable" id="sort-date">Date ↕</div>
                 </div>
                 <div id="results-list" class="results-list">
                     <!-- Items will be injected here -->
@@ -76,6 +124,13 @@
                         d="M14,3V5H17.59L7.76,14.83L9.17,16.24L19,6.41V10H21V3M19,19H5V5H12V3H5C3.89,3 3,3.9 3,5V19A2,2 0 0,0 5,21H19A2,2 0 0,0 21,19V12H19V19Z" />
                 </svg>
                 <span id="open-text">Open</span>
+            </div>
+            <div class="menu-item" id="menu-preview" style="display: none;">
+                <svg viewBox="0 0 24 24" width="16" height="16">
+                    <path fill="currentColor"
+                        d="M12,9A3,3 0 0,0 9,12A3,3 0 0,0 12,15A3,3 0 0,0 15,12A3,3 0 0,0 12,9M12,17A5,5 0 0,1 7,12A5,5 0 0,1 12,7A5,5 0 0,1 17,12A5,5 0 0,1 12,17M12,4.5C7,4.5 2.73,7.61 1,12C2.73,16.39 7,19.5 12,19.5C17,19.5 21.27,16.39 23,12C21.27,7.61 17,4.5 12,4.5Z" />
+                </svg>
+                <span>Preview</span>
             </div>
             <div class="menu-item" id="menu-reveal">
                 <svg viewBox="0 0 24 24" width="16" height="16">
@@ -98,15 +153,49 @@
         <div id="modal-overlay" class="modal-overlay hidden">
             <div class="modal">
                 <div class="modal-header">
-                    <h3>Delete Confirmation</h3>
+                    <h3 id="modal-title">Delete Confirmation</h3>
                 </div>
                 <div class="modal-body">
-                    <p>Are you sure you want to delete <strong id="delete-item-name"></strong>?</p>
+                    <p id="modal-message">Are you sure you want to delete <strong id="delete-item-name"></strong>?</p>
                     <p class="warning-text">This action cannot be undone.</p>
                 </div>
                 <div class="modal-footer">
                     <button id="cancel-delete" class="secondary-btn">Cancel</button>
                     <button id="confirm-delete" class="danger-btn">Delete Forever</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Preview Modal -->
+        <div id="preview-overlay" class="modal-overlay hidden">
+            <div class="modal preview-modal">
+                <div class="modal-header">
+                    <h3 id="preview-title">File Preview</h3>
+                    <button id="close-preview" class="icon-btn">
+                        <svg viewBox="0 0 24 24" width="20" height="20">
+                            <path fill="currentColor" d="M19,6.41L17.59,5L12,10.59L6.41,5L5,6.41L10.59,12L5,17.59L6.41,19L12,13.41L17.59,19L19,17.59L13.41,12Z" />
+                        </svg>
+                    </button>
+                </div>
+                <div class="modal-body preview-body">
+                    <div id="preview-content"></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Duplicates Modal -->
+        <div id="duplicates-overlay" class="modal-overlay hidden">
+            <div class="modal duplicates-modal">
+                <div class="modal-header">
+                    <h3>Duplicate Files Found</h3>
+                    <button id="close-duplicates" class="icon-btn">
+                        <svg viewBox="0 0 24 24" width="20" height="20">
+                            <path fill="currentColor" d="M19,6.41L17.59,5L12,10.59L6.41,5L5,6.41L10.59,12L5,17.59L6.41,19L12,13.41L17.59,19L19,17.59L13.41,12Z" />
+                        </svg>
+                    </button>
+                </div>
+                <div class="modal-body">
+                    <div id="duplicates-list" class="duplicates-list"></div>
                 </div>
             </div>
         </div>

@@ -6,6 +6,7 @@ const loader = document.getElementById('loader');
 const currentPathSpan = document.getElementById('current-path');
 const contextMenu = document.getElementById('context-menu');
 const menuOpen = document.getElementById('menu-open');
+const menuPreview = document.getElementById('menu-preview');
 const menuReveal = document.getElementById('menu-reveal');
 const openText = document.getElementById('open-text');
 const menuDelete = document.getElementById('menu-delete');
@@ -15,19 +16,53 @@ const confirmDeleteBtn = document.getElementById('confirm-delete');
 const cancelDeleteBtn = document.getElementById('cancel-delete');
 const backBtn = document.getElementById('back-btn');
 const searchInput = document.getElementById('search-input');
+const typeFilter = document.getElementById('type-filter');
+const minSizeInput = document.getElementById('min-size-input');
+const sizeUnit = document.getElementById('size-unit');
+const findDuplicatesBtn = document.getElementById('find-duplicates-btn');
+const sortName = document.getElementById('sort-name');
+const sortSize = document.getElementById('sort-size');
+const sortDate = document.getElementById('sort-date');
+const totalSizeSpan = document.getElementById('total-size');
+const fileCountSpan = document.getElementById('file-count');
+const folderCountSpan = document.getElementById('folder-count');
+const previewOverlay = document.getElementById('preview-overlay');
+const previewContent = document.getElementById('preview-content');
+const previewTitle = document.getElementById('preview-title');
+const closePreview = document.getElementById('close-preview');
+const duplicatesOverlay = document.getElementById('duplicates-overlay');
+const duplicatesList = document.getElementById('duplicates-list');
+const closeDuplicates = document.getElementById('close-duplicates');
 
 let currentData = [];
 let filteredData = [];
 let itemToInteract = null;
 let currentFolderPath = '';
 let navigationHistory = [];
+let sortColumn = 'size';
+let sortDirection = 'desc';
+let duplicateMarkers = new Set();
 
-searchInput.addEventListener('input', (e) => {
-    const query = e.target.value.toLowerCase();
-    filteredData = currentData.filter(item =>
-        item.name.toLowerCase().includes(query)
-    );
-    renderResults(filteredData);
+// Event Listeners
+searchInput.addEventListener('input', () => applyFilters());
+typeFilter.addEventListener('change', () => applyFilters());
+minSizeInput.addEventListener('input', () => applyFilters());
+sizeUnit.addEventListener('change', () => applyFilters());
+
+sortName.addEventListener('click', () => setSort('name'));
+sortSize.addEventListener('click', () => setSort('size'));
+sortDate.addEventListener('click', () => setSort('date'));
+
+findDuplicatesBtn.addEventListener('click', async () => {
+    await findDuplicates();
+});
+
+closePreview.addEventListener('click', () => {
+    previewOverlay.classList.add('hidden');
+});
+
+closeDuplicates.addEventListener('click', () => {
+    duplicatesOverlay.classList.add('hidden');
 });
 
 selectBtn.addEventListener('click', async () => {
@@ -35,7 +70,10 @@ selectBtn.addEventListener('click', async () => {
     if (path) {
         navigationHistory = [];
         currentFolderPath = path;
-        searchInput.value = ''; // Reset search
+        searchInput.value = '';
+        minSizeInput.value = '';
+        typeFilter.value = 'all';
+        duplicateMarkers.clear();
         startScan(path);
     }
 });
@@ -43,7 +81,10 @@ selectBtn.addEventListener('click', async () => {
 backBtn.addEventListener('click', () => {
     if (navigationHistory.length > 0) {
         currentFolderPath = navigationHistory.pop();
-        searchInput.value = ''; // Reset search
+        searchInput.value = '';
+        minSizeInput.value = '';
+        typeFilter.value = 'all';
+        duplicateMarkers.clear();
         startScan(currentFolderPath, false);
     }
 });
@@ -52,7 +93,6 @@ async function startScan(path, addToHistory = true) {
     showLoader();
     currentPathSpan.textContent = path;
 
-    // Show/hide back button based on history
     if (navigationHistory.length > 0 || (addToHistory && currentFolderPath !== path)) {
         backBtn.classList.remove('hidden');
     } else {
@@ -62,7 +102,8 @@ async function startScan(path, addToHistory = true) {
     try {
         const results = await window.electronAPI.scanDirectory(path);
         currentData = results;
-        renderResults(results);
+        updateStatistics(results);
+        applyFilters();
         showResults();
     } catch (error) {
         console.error('Scan failed:', error);
@@ -70,6 +111,209 @@ async function startScan(path, addToHistory = true) {
     } finally {
         hideLoader();
     }
+}
+
+function updateStatistics(items) {
+    let totalSize = 0;
+    let fileCount = 0;
+    let folderCount = 0;
+
+    items.forEach(item => {
+        totalSize += item.size;
+        if (item.isDirectory) {
+            folderCount++;
+        } else {
+            fileCount++;
+        }
+    });
+
+    totalSizeSpan.textContent = formatSize(totalSize);
+    fileCountSpan.textContent = fileCount;
+    folderCountSpan.textContent = folderCount;
+}
+
+function applyFilters() {
+    let filtered = [...currentData];
+
+    // Search filter (advanced)
+    const searchQuery = searchInput.value.trim();
+    if (searchQuery) {
+        filtered = filtered.filter(item => {
+            const name = item.name.toLowerCase();
+            const ext = item.extension.toLowerCase();
+            const pathLower = item.path.toLowerCase();
+            
+            // Check if it's a regex pattern
+            try {
+                const regex = new RegExp(searchQuery, 'i');
+                return regex.test(name) || regex.test(ext) || regex.test(pathLower);
+            } catch (e) {
+                // Not a valid regex, use simple search
+                return name.includes(searchQuery.toLowerCase()) || 
+                       ext.includes(searchQuery.toLowerCase()) ||
+                       pathLower.includes(searchQuery.toLowerCase());
+            }
+        });
+    }
+
+    // Type filter
+    const selectedType = typeFilter.value;
+    if (selectedType !== 'all') {
+        if (selectedType === 'folders') {
+            filtered = filtered.filter(item => item.isDirectory);
+        } else {
+            filtered = filtered.filter(item => !item.isDirectory && item.fileType === selectedType);
+        }
+    }
+
+    // Size filter
+    const minSizeValue = parseFloat(minSizeInput.value);
+    if (!isNaN(minSizeValue) && minSizeValue > 0) {
+        const unit = sizeUnit.value;
+        const multiplier = {
+            'B': 1,
+            'KB': 1024,
+            'MB': 1024 * 1024,
+            'GB': 1024 * 1024 * 1024
+        }[unit] || 1;
+        const minBytes = minSizeValue * multiplier;
+        filtered = filtered.filter(item => item.size >= minBytes);
+    }
+
+    // Apply sorting
+    filtered = sortData(filtered);
+
+    filteredData = filtered;
+    renderResults(filtered);
+    updateStatistics(filtered);
+}
+
+function setSort(column) {
+    if (sortColumn === column) {
+        sortDirection = sortDirection === 'asc' ? 'desc' : 'asc';
+    } else {
+        sortColumn = column;
+        sortDirection = 'desc';
+    }
+    updateSortHeaders();
+    applyFilters();
+}
+
+function updateSortHeaders() {
+    [sortName, sortSize, sortDate].forEach(header => {
+        header.textContent = header.textContent.replace(/ [↕↑↓]/, '') + ' ↕';
+    });
+
+    const arrow = sortDirection === 'asc' ? ' ↑' : ' ↓';
+    if (sortColumn === 'name') sortName.textContent = sortName.textContent.replace(' ↕', arrow);
+    if (sortColumn === 'size') sortSize.textContent = sortSize.textContent.replace(' ↕', arrow);
+    if (sortColumn === 'date') sortDate.textContent = sortDate.textContent.replace(' ↕', arrow);
+}
+
+function sortData(data) {
+    const sorted = [...data];
+    sorted.sort((a, b) => {
+        let comparison = 0;
+        
+        switch (sortColumn) {
+            case 'name':
+                comparison = a.name.localeCompare(b.name);
+                break;
+            case 'size':
+                comparison = a.size - b.size;
+                break;
+            case 'date':
+                comparison = new Date(a.modifiedDate) - new Date(b.modifiedDate);
+                break;
+        }
+        
+        return sortDirection === 'asc' ? comparison : -comparison;
+    });
+    
+    return sorted;
+}
+
+async function findDuplicates() {
+    showLoader();
+    const files = currentData.filter(item => !item.isDirectory);
+    
+    if (files.length === 0) {
+        hideLoader();
+        alert('No files to check for duplicates');
+        return;
+    }
+
+    const hashMap = new Map();
+    const duplicates = [];
+
+    for (const file of files) {
+        try {
+            const hash = await window.electronAPI.calculateFileHash(file.path);
+            if (hash) {
+                if (hashMap.has(hash)) {
+                    const existing = hashMap.get(hash);
+                    if (!duplicates.find(d => d.hash === hash)) {
+                        duplicates.push({
+                            hash: hash,
+                            files: [existing, file]
+                        });
+                    } else {
+                        const dupGroup = duplicates.find(d => d.hash === hash);
+                        dupGroup.files.push(file);
+                    }
+                } else {
+                    hashMap.set(hash, file);
+                }
+            }
+        } catch (err) {
+            console.error(`Error processing ${file.path}:`, err);
+        }
+    }
+
+    hideLoader();
+    duplicateMarkers.clear();
+    
+    if (duplicates.length === 0) {
+        alert('No duplicate files found!');
+        return;
+    }
+
+    duplicates.forEach(dup => {
+        dup.files.forEach(file => {
+            duplicateMarkers.add(file.path);
+        });
+    });
+
+    displayDuplicates(duplicates);
+    applyFilters(); // Re-render to show markers
+}
+
+function displayDuplicates(duplicates) {
+    duplicatesList.innerHTML = '';
+    
+    duplicates.forEach((dup, index) => {
+        const groupDiv = document.createElement('div');
+        groupDiv.className = 'duplicate-group';
+        
+        const header = document.createElement('div');
+        header.className = 'duplicate-group-header';
+        header.textContent = `Duplicate Group ${index + 1} (${dup.files.length} files, ${formatSize(dup.files[0].size)} each)`;
+        groupDiv.appendChild(header);
+
+        dup.files.forEach(file => {
+            const itemDiv = document.createElement('div');
+            itemDiv.className = 'duplicate-item';
+            itemDiv.innerHTML = `
+                <div class="duplicate-item-path">${file.path}</div>
+                <div class="duplicate-item-size">${formatSize(file.size)}</div>
+            `;
+            groupDiv.appendChild(itemDiv);
+        });
+
+        duplicatesList.appendChild(groupDiv);
+    });
+
+    duplicatesOverlay.classList.remove('hidden');
 }
 
 function renderResults(items) {
@@ -86,7 +330,12 @@ function renderResults(items) {
         const percentage = (item.size / maxSize) * 100;
         const div = document.createElement('div');
         div.className = 'result-item';
+        if (duplicateMarkers.has(item.path)) {
+            div.classList.add('duplicate');
+        }
         div.style.animationDelay = `${index * 0.05}s`;
+
+        const dateStr = item.modifiedDate ? formatDate(item.modifiedDate) : 'N/A';
 
         div.innerHTML = `
             <div class="item-icon">
@@ -100,6 +349,7 @@ function renderResults(items) {
                 <div class="item-path">${truncatePath(item.path)}</div>
             </div>
             <div class="item-size">${formatSize(item.size)}</div>
+            <div class="item-date">${dateStr}</div>
             <div class="size-bar-container">
                 <div class="size-bar" style="width: ${percentage}%"></div>
             </div>
@@ -111,12 +361,18 @@ function renderResults(items) {
             showContextMenu(e.pageX, e.pageY);
         });
 
-        div.addEventListener('dblclick', () => {
+        div.addEventListener('dblclick', async () => {
             if (item.isDirectory) {
                 navigationHistory.push(currentFolderPath);
                 currentFolderPath = item.path;
-                searchInput.value = ''; // Reset search
+                searchInput.value = '';
+                minSizeInput.value = '';
+                typeFilter.value = 'all';
+                duplicateMarkers.clear();
                 startScan(currentFolderPath);
+            } else {
+                // Preview file
+                await previewFile(item);
             }
         });
 
@@ -124,10 +380,53 @@ function renderResults(items) {
     });
 }
 
+async function previewFile(item) {
+    if (!item.fileType) return;
+
+    previewOverlay.classList.remove('hidden');
+    previewTitle.textContent = item.name;
+    previewContent.innerHTML = '<div class="loader"><div class="spinner"></div><p>Loading preview...</p></div>';
+
+    try {
+        if (item.fileType === 'images') {
+            const result = await window.electronAPI.readImageFile(item.path);
+            if (result.success) {
+                previewContent.innerHTML = `<img src="data:image/${item.extension.slice(1)};base64,${result.data}" alt="${item.name}">`;
+            } else {
+                previewContent.innerHTML = `<p>Could not load image: ${result.error}</p>`;
+            }
+        } else if (item.fileType === 'documents' && ['.txt', '.md', '.json', '.js', '.css', '.html', '.xml'].includes(item.extension)) {
+            const result = await window.electronAPI.readFileContent(item.path);
+            if (result.success) {
+                previewContent.innerHTML = `<pre>${escapeHtml(result.content)}</pre>`;
+            } else {
+                previewContent.innerHTML = `<p>Could not load file: ${result.error}</p>`;
+            }
+        } else {
+            previewContent.innerHTML = `<p>Preview not available for this file type. Double-click to open with default application.</p>`;
+        }
+    } catch (err) {
+        previewContent.innerHTML = `<p>Error loading preview: ${err.message}</p>`;
+    }
+}
+
+function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
+
 // Context Menu Logic
 function showContextMenu(x, y) {
     if (itemToInteract) {
         openText.textContent = itemToInteract.isDirectory ? 'Open Folder' : 'Open File';
+        // Show preview option only for files that can be previewed
+        if (!itemToInteract.isDirectory && (itemToInteract.fileType === 'images' || 
+            (itemToInteract.fileType === 'documents' && ['.txt', '.md', '.json', '.js', '.css', '.html', '.xml'].includes(itemToInteract.extension)))) {
+            menuPreview.style.display = 'flex';
+        } else {
+            menuPreview.style.display = 'none';
+        }
     }
     contextMenu.style.left = `${x}px`;
     contextMenu.style.top = `${y}px`;
@@ -142,10 +441,28 @@ document.addEventListener('click', () => {
     hideContextMenu();
 });
 
-menuOpen.addEventListener('click', (e) => {
+menuOpen.addEventListener('click', async (e) => {
     e.stopPropagation();
     if (itemToInteract) {
-        window.electronAPI.openItem(itemToInteract.path);
+        if (itemToInteract.isDirectory) {
+            navigationHistory.push(currentFolderPath);
+            currentFolderPath = itemToInteract.path;
+            searchInput.value = '';
+            minSizeInput.value = '';
+            typeFilter.value = 'all';
+            duplicateMarkers.clear();
+            startScan(currentFolderPath);
+        } else {
+            window.electronAPI.openItem(itemToInteract.path);
+        }
+        hideContextMenu();
+    }
+});
+
+menuPreview.addEventListener('click', async (e) => {
+    e.stopPropagation();
+    if (itemToInteract && !itemToInteract.isDirectory) {
+        await previewFile(itemToInteract);
         hideContextMenu();
     }
 });
@@ -179,7 +496,6 @@ confirmDeleteBtn.addEventListener('click', async () => {
         showLoader();
         const result = await window.electronAPI.deleteItem(itemToInteract.path);
         if (result.success) {
-            // Re-scan after deletion
             await startScan(currentFolderPath);
         } else {
             alert(`Delete failed: ${result.error}`);
@@ -195,6 +511,11 @@ function formatSize(bytes) {
     const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
     const i = Math.floor(Math.log(bytes) / Math.log(k));
     return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+}
+
+function formatDate(date) {
+    const d = new Date(date);
+    return d.toLocaleDateString() + ' ' + d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 }
 
 function truncatePath(path) {
@@ -217,3 +538,6 @@ function hideLoader() {
 function showResults() {
     resultsScreen.classList.remove('hidden');
 }
+
+// Initialize sort headers
+updateSortHeaders();

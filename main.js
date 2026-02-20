@@ -1,6 +1,7 @@
 const { app, BrowserWindow, ipcMain, dialog, shell } = require('electron');
 const path = require('path');
 const fs = require('fs');
+const crypto = require('crypto');
 
 function createWindow() {
   const win = new BrowserWindow({
@@ -68,6 +69,32 @@ ipcMain.handle('open-item-location', async (event, itemPath) => {
   shell.showItemInFolder(itemPath);
 });
 
+ipcMain.handle('calculate-file-hash', async (event, filePath) => {
+  return calculateFileHash(filePath);
+});
+
+ipcMain.handle('read-file-content', async (event, filePath) => {
+  try {
+    const stats = fs.statSync(filePath);
+    if (stats.size > 10 * 1024 * 1024) { // 10MB limit
+      return { success: false, error: 'File too large to preview' };
+    }
+    const content = fs.readFileSync(filePath, 'utf8');
+    return { success: true, content };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
+
+ipcMain.handle('read-image-file', async (event, filePath) => {
+  try {
+    const data = fs.readFileSync(filePath);
+    return { success: true, data: data.toString('base64') };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
+
 async function scanDir(dirPath) {
   const items = fs.readdirSync(dirPath);
   const results = [];
@@ -85,11 +112,18 @@ async function scanDir(dirPath) {
         size = stats.size;
       }
 
+      const extension = isDirectory ? '' : path.extname(item).toLowerCase();
+      const fileType = getFileType(extension);
+      
       results.push({
         name: item,
         path: fullPath,
         size: size,
-        isDirectory: isDirectory
+        isDirectory: isDirectory,
+        extension: extension,
+        fileType: fileType,
+        modifiedDate: stats.mtime,
+        createdDate: stats.birthtime || stats.ctime
       });
     } catch (err) {
       console.error(`Error scanning ${fullPath}:`, err);
@@ -116,4 +150,29 @@ function getFolderSize(folderPath) {
     // console.error(err);
   }
   return totalSize;
+}
+
+function getFileType(extension) {
+  const imageExts = ['.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp', '.svg', '.ico'];
+  const videoExts = ['.mp4', '.avi', '.mkv', '.mov', '.wmv', '.flv', '.webm', '.m4v'];
+  const docExts = ['.pdf', '.doc', '.docx', '.txt', '.rtf', '.odt', '.xls', '.xlsx', '.ppt', '.pptx'];
+  const archiveExts = ['.zip', '.rar', '.7z', '.tar', '.gz', '.bz2', '.xz'];
+  
+  if (imageExts.includes(extension)) return 'images';
+  if (videoExts.includes(extension)) return 'videos';
+  if (docExts.includes(extension)) return 'documents';
+  if (archiveExts.includes(extension)) return 'archives';
+  return 'other';
+}
+
+function calculateFileHash(filePath) {
+  try {
+    const fileBuffer = fs.readFileSync(filePath);
+    const hashSum = crypto.createHash('md5');
+    hashSum.update(fileBuffer);
+    return hashSum.digest('hex');
+  } catch (err) {
+    console.error(`Error calculating hash for ${filePath}:`, err);
+    return null;
+  }
 }
