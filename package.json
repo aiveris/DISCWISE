@@ -1,0 +1,16 @@
+{
+  "name": "disk-space-sorter",
+  "version": "1.0.0",
+  "description": "A desktop application to sort files and folders by size.",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "dev": "electron ."
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "electron": "^30.0.0"
+  }
+}
